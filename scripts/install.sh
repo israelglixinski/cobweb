@@ -57,23 +57,27 @@ ${SUDO} systemctl stop nginx >/dev/null 2>&1 || true
 ACME_HOME="/opt/acme.sh"
 ACME_BIN="${ACME_HOME}/acme.sh"
 ACME_CERT_HOME="${ACME_HOME}/certs"
+ACME_DEFAULT_EMAIL="${ACME_DEFAULT_EMAIL:-admin@example.com}"
 
 if [[ ! -f "${ACME_BIN}" ]]; then
   log "Instalando acme.sh (cliente ACME com suporte a TLS-ALPN)..."
   require_cmd curl
   TMP_INSTALL_SCRIPT="$(mktemp)"
   curl -fsSL https://get.acme.sh -o "${TMP_INSTALL_SCRIPT}"
-  ${SUDO} sh "${TMP_INSTALL_SCRIPT}" \
-    --home "${ACME_HOME}" \
-    --config-home "${ACME_HOME}" \
-    --cert-home "${ACME_CERT_HOME}" \
-    --accountemail "admin@example.com" \
-    >/dev/null
+  ACME_INSTALL_ARGS=(
+    "email=${ACME_DEFAULT_EMAIL}"
+    "--home" "${ACME_HOME}"
+    "--config-home" "${ACME_HOME}"
+    "--cert-home" "${ACME_CERT_HOME}"
+  )
+  ${SUDO} sh "${TMP_INSTALL_SCRIPT}" "${ACME_INSTALL_ARGS[@]}" >/dev/null
   rm -f "${TMP_INSTALL_SCRIPT}"
 else
   log "Atualizando acme.sh..."
   ${SUDO} "${ACME_BIN}" --home "${ACME_HOME}" --upgrade >/dev/null
 fi
+
+${SUDO} mkdir -p "${ACME_HOME}" "${ACME_CERT_HOME}"
 
 ${SUDO} chmod +x "${ACME_BIN}"
 
