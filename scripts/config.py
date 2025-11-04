@@ -150,13 +150,10 @@ def ensure_certificate(domain: str, email: str, sudo: Optional[str], certbot_bin
     log("Nenhum certificado encontrado. Iniciando emissao via desafio TLS-ALPN-01...")
     run_cmd(sudo, "systemctl", "stop", "nginx", check=False)
 
-    cmd = build_cmd(
-        sudo,
+    args_base = [
         certbot_bin,
         "certonly",
         "--standalone",
-        "--preferred-challenges",
-        "tls-alpn-01",
         "-d",
         domain,
         "--agree-tos",
@@ -164,14 +161,32 @@ def ensure_certificate(domain: str, email: str, sudo: Optional[str], certbot_bin
         email,
         "--non-interactive",
         "--keep-until-expiring",
-    )
+    ]
 
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        log("Falha ao emitir o certificado. Verifique logs do certbot e garanta que a porta 443 esteja livre.")
-        sys.exit(result.returncode)
+    attempts = [
+        ("tls-alpn-01", ["--preferred-challenges", "tls-alpn-01"]),
+        ("tls-alpn", ["--preferred-challenges", "tls-alpn"]),
+    ]
 
-    log("Certificado emitido com sucesso.")
+    last_rc = 1
+    for label, extra in attempts:
+        cmd = build_cmd(sudo, *(args_base + extra))
+        log(f"Executando certbot com desafio '{label}'...")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        last_rc = result.returncode
+        if result.returncode == 0:
+            log("Certificado emitido com sucesso.")
+            return
+
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        if "Unrecognized challenges" not in result.stderr:
+            break
+
+        log(f"Certbot nao reconheceu o desafio '{label}'. Tentando alternativa...")
+
+    log("Falha ao emitir o certificado. Verifique logs do certbot e garanta que a porta 443 esteja livre.")
+    sys.exit(last_rc or 1)
 
 
 def render_routes(routes: List[Dict[str, Any]]) -> str:

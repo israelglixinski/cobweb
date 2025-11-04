@@ -30,7 +30,7 @@ make run
 
 - `make config`  
   - Solicita dominio, email e rotas que serao expostas (raiz `/` e caminhos adicionais, ex: `/api/`).  
-  - Emite/renova certificado com `certbot certonly --standalone --preferred-challenges tls-alpn-01`.  
+  - Emite/renova certificado com `certbot certonly --standalone` usando o desafio **TLS-ALPN** (tenta `tls-alpn-01` e, caso nao seja reconhecido, volta para `tls-alpn`).  
   - Gera a configuracao local em `config/cobweb.conf` e replica o arquivo para `/etc/nginx/sites-available/cobweb.conf`, criando o link simbólico em `sites-enabled`.  
   - Executa `nginx -t` para validar o arquivo.
 
