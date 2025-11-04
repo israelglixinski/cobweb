@@ -62,6 +62,22 @@ def popen_cmd(sudo: Optional[str], *args: str, **kwargs: Any) -> subprocess.Pope
     return subprocess.Popen(build_cmd(sudo, *args), **kwargs)
 
 
+def safe_read(path: Path, sudo: Optional[str]) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except PermissionError:
+        cp = subprocess.run(
+            build_cmd(sudo, "cat", str(path)),
+            capture_output=True,
+            text=True,
+        )
+        if cp.returncode == 0:
+            return cp.stdout
+    except FileNotFoundError:
+        return ""
+    return ""
+
+
 def prompt(text: str, default: Optional[str] = None, required: bool = False) -> str:
     while True:
         suffix = f" [{default}]" if default else ""
@@ -146,6 +162,13 @@ def ensure_acme_account(acme_bin: str, email: str, sudo: Optional[str]) -> None:
     env = os.environ.copy()
     env.setdefault("ACME_HOME", str(ACME_HOME))
 
+    account_conf = ACME_HOME / "account.conf"
+    if account_conf.exists():
+        contents = safe_read(account_conf, sudo)
+        if "example.com" in contents:
+            log("Removendo configuracao antiga do acme.sh com email invalido.")
+            run_cmd(sudo, "rm", "-f", str(account_conf), check=False)
+
     register_cmd = build_cmd(
         sudo,
         acme_bin,
@@ -156,6 +179,7 @@ def ensure_acme_account(acme_bin: str, email: str, sudo: Optional[str]) -> None:
         "--register-account",
         "-m",
         email,
+        "--force",
     )
 
     result = subprocess.run(register_cmd, capture_output=True, text=True, env=env)
