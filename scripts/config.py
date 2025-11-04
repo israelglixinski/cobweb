@@ -21,6 +21,7 @@ ACME_BIN_CANDIDATES = [
     ACME_HOME / "acme.sh",
     Path("/usr/local/bin/acme.sh"),
 ]
+RELOAD_HELPER = Path("/usr/local/bin/cobweb-nginx-reload.sh")
 
 
 def log(message: str) -> None:
@@ -221,6 +222,10 @@ def ensure_certificate(domain: str, email: str, sudo: Optional[str], acme_bin: s
     key_path = cert_dir / "privkey.pem"
     fullchain_path = cert_dir / "fullchain.pem"
 
+    if not RELOAD_HELPER.exists():
+        log(f"Erro: helper de reload {RELOAD_HELPER} nao encontrado. Rode 'make install' novamente.")
+        sys.exit(1)
+
     env = os.environ.copy()
     env.setdefault("ACME_HOME", str(ACME_HOME))
 
@@ -245,7 +250,7 @@ def ensure_certificate(domain: str, email: str, sudo: Optional[str], acme_bin: s
             "--fullchain-file",
             str(fullchain_path),
             "--reloadcmd",
-            "systemctl reload nginx",
+            str(RELOAD_HELPER),
         )
         install = subprocess.run(install_cmd, capture_output=True, text=True, env=env)
         if install.returncode == 0:
@@ -275,7 +280,7 @@ def ensure_certificate(domain: str, email: str, sudo: Optional[str], acme_bin: s
         "--fullchain-file",
         str(fullchain_path),
         "--reloadcmd",
-        "systemctl reload nginx",
+        str(RELOAD_HELPER),
     )
 
     result = subprocess.run(issue_cmd, capture_output=True, text=True, env=env)

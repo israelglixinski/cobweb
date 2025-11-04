@@ -104,3 +104,22 @@ log "Configurando acme.sh para usar Let's Encrypt como autoridade padrao..."
 ${SUDO} "${ACME_BIN}" --home "${ACME_HOME}" --set-default-ca --server letsencrypt >/dev/null
 
 log "Dependencias instaladas com sucesso."
+
+RELOAD_HELPER="/usr/local/bin/cobweb-nginx-reload.sh"
+log "Instalando helper de reload do Nginx (${RELOAD_HELPER})..."
+TMP_RELOAD="$(mktemp)"
+cat <<'EOF' > "${TMP_RELOAD}"
+#!/usr/bin/env bash
+set -euo pipefail
+
+if systemctl is-active --quiet nginx; then
+  systemctl reload nginx
+  exit $?
+fi
+
+echo "[cobweb][reload] Nginx nao estava ativo. Reload ignorado."
+exit 0
+EOF
+${SUDO} mv "${TMP_RELOAD}" "${RELOAD_HELPER}"
+${SUDO} chmod +x "${RELOAD_HELPER}"
+log "Helper de reload instalado."
