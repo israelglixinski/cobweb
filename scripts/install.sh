@@ -60,7 +60,7 @@ ${SUDO} systemctl stop nginx >/dev/null 2>&1 || true
 ACME_HOME="/opt/acme.sh"
 ACME_BIN="${ACME_HOME}/acme.sh"
 ACME_CERT_HOME="${ACME_HOME}/certs"
-ACME_DEFAULT_EMAIL="${ACME_DEFAULT_EMAIL:-admin@example.com}"
+ACME_DEFAULT_EMAIL="${ACME_DEFAULT_EMAIL:-}"
 
 if [[ ! -f "${ACME_BIN}" ]]; then
   log "Instalando acme.sh (cliente ACME com suporte a TLS-ALPN)..."
@@ -68,11 +68,13 @@ if [[ ! -f "${ACME_BIN}" ]]; then
   TMP_INSTALL_SCRIPT="$(mktemp)"
   curl -fsSL https://get.acme.sh -o "${TMP_INSTALL_SCRIPT}"
   ACME_INSTALL_ARGS=(
-    "email=${ACME_DEFAULT_EMAIL}"
     "--home" "${ACME_HOME}"
     "--config-home" "${ACME_HOME}"
     "--cert-home" "${ACME_CERT_HOME}"
   )
+  if [[ -n "${ACME_DEFAULT_EMAIL}" ]]; then
+    ACME_INSTALL_ARGS=("email=${ACME_DEFAULT_EMAIL}" "${ACME_INSTALL_ARGS[@]}")
+  fi
   if ! ${SUDO} sh "${TMP_INSTALL_SCRIPT}" "${ACME_INSTALL_ARGS[@]}" >/dev/null; then
     rm -f "${TMP_INSTALL_SCRIPT}"
     log "Falha ao instalar acme.sh. Verifique se o pacote 'cron' esta presente ou use ACME_DEFAULT_EMAIL."
