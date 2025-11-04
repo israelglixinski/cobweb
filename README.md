@@ -26,6 +26,7 @@ make run
 ### O que cada etapa faz
 - `make install`  
   - Atualiza os indices do apt e instala `nginx`, `curl` e `socat` (requisito do desafio ALPN).  
+  - Instala o serviço `cron` (usado pelo acme.sh para renovar automaticamente) e garante que as dependencias existam.  
   - Instala/atualiza o **acme.sh** em `/opt/acme.sh` (email padrao pode ser ajustado com a variavel `ACME_DEFAULT_EMAIL`) e cria o link `/usr/local/bin/acme.sh`.  
   - Remove o site padrao do Nginx, habilita o serviço em systemd e garante que ele esteja parado.
 

@@ -28,7 +28,10 @@ log "Atualizando indices do apt..."
 ${SUDO} apt-get update
 
 log "Instalando dependencias essenciais..."
-${SUDO} apt-get install "${APT_OPTS[@]}" nginx curl socat
+${SUDO} apt-get install "${APT_OPTS[@]}" nginx curl socat cron
+
+log "Garantindo que o cron esteja habilitado para execucao das renovações..."
+${SUDO} systemctl enable --now cron >/dev/null 2>&1 || true
 
 # Remover installacoes anteriores de certbot para evitar conflitos conceituais
 if ${SUDO} dpkg -l | awk '{print $2}' | grep -q "^certbot$"; then
@@ -70,7 +73,11 @@ if [[ ! -f "${ACME_BIN}" ]]; then
     "--config-home" "${ACME_HOME}"
     "--cert-home" "${ACME_CERT_HOME}"
   )
-  ${SUDO} sh "${TMP_INSTALL_SCRIPT}" "${ACME_INSTALL_ARGS[@]}" >/dev/null
+  if ! ${SUDO} sh "${TMP_INSTALL_SCRIPT}" "${ACME_INSTALL_ARGS[@]}" >/dev/null; then
+    rm -f "${TMP_INSTALL_SCRIPT}"
+    log "Falha ao instalar acme.sh. Verifique se o pacote 'cron' esta presente ou use ACME_DEFAULT_EMAIL."
+    exit 1
+  fi
   rm -f "${TMP_INSTALL_SCRIPT}"
 else
   log "Atualizando acme.sh..."
@@ -78,6 +85,11 @@ else
 fi
 
 ${SUDO} mkdir -p "${ACME_HOME}" "${ACME_CERT_HOME}"
+
+if [[ ! -f "${ACME_BIN}" ]]; then
+  log "Erro: instalacao do acme.sh nao produziu ${ACME_BIN}."
+  exit 1
+fi
 
 ${SUDO} chmod +x "${ACME_BIN}"
 
