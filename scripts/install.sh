@@ -56,16 +56,23 @@ ${SUDO} systemctl stop nginx >/dev/null 2>&1 || true
 
 ACME_HOME="/opt/acme.sh"
 ACME_BIN="${ACME_HOME}/acme.sh"
-if [[ ! -d "${ACME_HOME}" ]]; then
+ACME_CERT_HOME="${ACME_HOME}/certs"
+
+if [[ ! -f "${ACME_BIN}" ]]; then
   log "Instalando acme.sh (cliente ACME com suporte a TLS-ALPN)..."
   require_cmd curl
   TMP_INSTALL_SCRIPT="$(mktemp)"
   curl -fsSL https://get.acme.sh -o "${TMP_INSTALL_SCRIPT}"
-  ${SUDO} sh "${TMP_INSTALL_SCRIPT}" --install --home "${ACME_HOME}" >/dev/null
+  ${SUDO} sh "${TMP_INSTALL_SCRIPT}" \
+    --home "${ACME_HOME}" \
+    --config-home "${ACME_HOME}" \
+    --cert-home "${ACME_CERT_HOME}" \
+    --accountemail "admin@example.com" \
+    >/dev/null
   rm -f "${TMP_INSTALL_SCRIPT}"
 else
   log "Atualizando acme.sh..."
-  ${SUDO} "${ACME_BIN}" --upgrade >/dev/null
+  ${SUDO} "${ACME_BIN}" --home "${ACME_HOME}" --upgrade >/dev/null
 fi
 
 ${SUDO} chmod +x "${ACME_BIN}"
@@ -74,5 +81,8 @@ if [[ ! -L /usr/local/bin/acme.sh || "$(readlink -f /usr/local/bin/acme.sh 2>/de
   log "Criando link simbolico /usr/local/bin/acme.sh..."
   ${SUDO} ln -sf "${ACME_BIN}" /usr/local/bin/acme.sh
 fi
+
+log "Configurando acme.sh para usar Let's Encrypt como autoridade padrao..."
+${SUDO} "${ACME_BIN}" --home "${ACME_HOME}" --set-default-ca --server letsencrypt >/dev/null
 
 log "Dependencias instaladas com sucesso."
