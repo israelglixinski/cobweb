@@ -34,6 +34,25 @@ def require_cmd(cmd: str) -> None:
         sys.exit(1)
 
 
+def find_certbot() -> str:
+    snap_path = Path("/snap/bin/certbot")
+    candidates: List[str] = []
+    if snap_path.exists():
+        candidates.append(str(snap_path))
+
+    which_path = shutil.which("certbot")
+    if which_path:
+        candidates.append(which_path)
+
+    if not candidates:
+        log("Erro: certbot nao encontrado. Execute 'make install' antes de continuar.")
+        sys.exit(1)
+
+    selected = candidates[0]
+    log(f"Usando certbot em {selected}")
+    return selected
+
+
 def detect_sudo() -> Optional[str]:
     if os.geteuid() == 0:
         return None
@@ -122,7 +141,7 @@ def prompt_routes(existing: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return routes
 
 
-def ensure_certificate(domain: str, email: str, sudo: Optional[str]) -> None:
+def ensure_certificate(domain: str, email: str, sudo: Optional[str], certbot_bin: str) -> None:
     cert_path = Path(f"/etc/letsencrypt/live/{domain}/fullchain.pem")
     if cert_path.exists():
         log(f"Certificado Let's Encrypt encontrado em {cert_path}. Pulando emissao.")
@@ -133,7 +152,7 @@ def ensure_certificate(domain: str, email: str, sudo: Optional[str]) -> None:
 
     cmd = build_cmd(
         sudo,
-        "certbot",
+        certbot_bin,
         "certonly",
         "--standalone",
         "--preferred-challenges",
@@ -258,7 +277,7 @@ def save_settings(settings: Dict[str, Any]) -> None:
 def main() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     ensure_template_exists()
-    require_cmd("certbot")
+    certbot_bin = find_certbot()
     sudo = detect_sudo()
 
     existing = load_existing()
@@ -267,7 +286,7 @@ def main() -> None:
 
     routes = prompt_routes(existing.get("routes", []))
 
-    ensure_certificate(domain, email, sudo)
+    ensure_certificate(domain, email, sudo, certbot_bin)
 
     ssl_cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
     ssl_cert_key = f"/etc/letsencrypt/live/{domain}/privkey.pem"
