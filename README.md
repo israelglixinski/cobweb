@@ -24,7 +24,8 @@ make run
 
 ### O que cada etapa faz
 - `make install`  
-  - Atualiza os indices do apt e instala `nginx` e `certbot`.  
+  - Atualiza os indices do apt e instala `nginx` e `snapd`.  
+  - Instala o `certbot` via **snap** (versao com suporte ao desafio TLS-ALPN-01) e cria o link `/usr/bin/certbot`.  
   - Remove o site padrao do Nginx e garante que o servico esteja parado, pronto para novas configuracoes.
 
 - `make config`  

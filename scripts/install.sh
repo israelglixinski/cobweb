@@ -28,7 +28,33 @@ log "Atualizando indices do apt..."
 ${SUDO} apt-get update
 
 log "Instalando dependencias essenciais..."
-${SUDO} apt-get install "${APT_OPTS[@]}" nginx certbot
+${SUDO} apt-get install "${APT_OPTS[@]}" nginx
+
+if ${SUDO} dpkg -l | awk '{print $2}' | grep -q "^certbot$"; then
+  log "Removendo pacote certbot do apt para evitar conflito..."
+  ${SUDO} apt-get remove "${APT_OPTS[@]}" certbot
+  ${SUDO} apt-get autoremove "${APT_OPTS[@]}" || true
+fi
+
+if ! command -v snap >/dev/null 2>&1; then
+  log "Instalando snapd (necessario para o certbot moderno)..."
+  ${SUDO} apt-get install "${APT_OPTS[@]}" snapd
+  ${SUDO} systemctl enable --now snapd.socket >/dev/null
+fi
+
+log "Instalando/atualizando certbot via snap (suporte TLS-ALPN)..."
+${SUDO} snap install core >/dev/null
+${SUDO} snap refresh core >/dev/null
+if ! ${SUDO} snap list | awk '{print $1}' | grep -q "^certbot$"; then
+  ${SUDO} snap install --classic certbot >/dev/null
+else
+  ${SUDO} snap refresh certbot >/dev/null
+fi
+
+if [[ ! -L /usr/bin/certbot || "$(readlink -f /usr/bin/certbot)" != "/snap/bin/certbot" ]]; then
+  log "Criando link simbolico para usar o certbot do snap..."
+  ${SUDO} ln -sf /snap/bin/certbot /usr/bin/certbot
+fi
 
 log "Garantindo estrutura de diretorios do projeto..."
 mkdir -p "${PROJECT_ROOT}/config"
