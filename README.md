@@ -1,41 +1,42 @@
 # Cobweb
 
-Cobweb e um orquestrador simples para configurar um Nginx em modo reverse proxy (porteiro/seguranca) que expoe suas APIs pela porta 443 com TLS emitido pelo Let's Encrypt usando o desafio **TLS-ALPN-01** (sem depender da porta 80).  
-Toda a automacao roda via `make`, com cada alvo delegando a scripts dedicados em `scripts/`.
+Cobweb e um orquestrador simples para configurar um Nginx acting como reverse proxy (porteiro/seguranca) na porta 443.  
+Ele cuida da emissao do certificado TLS usando **acme.sh** com o desafio `TLS-ALPN-01`, evitando abrir a porta 80.  
+Toda a automacao roda via `make`, com cada alvo delegando a scripts dedicados armazenados em `scripts/`.
 
 ## Requisitos
-- Ubuntu (testado no 22.04) rodando na sua instancia OCI.
-- Apenas as portas 22 (SSH) e 443 (HTTPS) precisam estar liberadas.
-- Um dominio ou subdominio apontando para o IP publico da instancia.
-- Usuario com permissao sudo (os scripts sobem pacotes e editam `/etc/nginx`).
-- Nginx **nao** deve estar em uso durante o `make config`, pois o certbot abre um servidor standalone na 443 para validar o certificado.
+- Ubuntu (testado no 22.04) rodando na instancia OCI.
+- Somente as portas 22 (SSH) e 443 (HTTPS) precisam estar liberadas externamente.
+- Dominio/subdominio apontando para o IP publico da instancia.
+- Usuario com permissao sudo (os scripts instalam pacotes, mexem em `/etc/nginx` e `/etc/letsencrypt`).
+- Durante o `make config`, o Nginx deve estar parado: o acme.sh sobe um servidor ALPN na porta 443.
 
 ## Fluxo principal
 ```bash
-# 1. Instala dependencias do sistema (nginx, certbot, etc.)
+# 1. Instala dependencias do sistema e o acme.sh
 make install
 
-# 2. Gera certificado TLS via Let's Encrypt e cria a configuracao do Cobweb
+# 2. Coleta dominio/email, emite o certificado via acme.sh e gera a configuracao do Nginx
 make config
 
-# 3. Valida configuracao e inicia/recarrega o Nginx
+# 3. Valida configuracao e sobe/recarrega o Nginx
 make run
 ```
 
 ### O que cada etapa faz
 - `make install`  
-  - Atualiza os indices do apt e instala `nginx` e `snapd`.  
-  - Instala o `certbot` via **snap** (versao com suporte ao desafio TLS-ALPN-01) e cria o link `/usr/bin/certbot`.  
-  - Remove o site padrao do Nginx e garante que o servico esteja parado, pronto para novas configuracoes.
+  - Atualiza os indices do apt e instala `nginx`, `curl` e `socat` (requisito do desafio ALPN).  
+  - Instala/atualiza o **acme.sh** em `/opt/acme.sh` e cria o link `/usr/local/bin/acme.sh`.  
+  - Remove o site padrao do Nginx, habilita o serviço em systemd e garante que ele esteja parado.
 
 - `make config`  
-  - Solicita dominio, email e rotas que serao expostas (raiz `/` e caminhos adicionais, ex: `/api/`).  
-  - Emite/renova certificado com `certbot certonly --standalone` usando o desafio **TLS-ALPN** (tenta `tls-alpn-01` e, caso nao seja reconhecido, volta para `tls-alpn`).  
-  - Gera a configuracao local em `config/cobweb.conf` e replica o arquivo para `/etc/nginx/sites-available/cobweb.conf`, criando o link simbólico em `sites-enabled`.  
-  - Executa `nginx -t` para validar o arquivo.
+  - Pergunta dominio, email (usado no registro da conta ACME) e rotas a proxyar.  
+  - Registra/atualiza a conta no acme.sh e emite o certificado com `--issue --alpn`, salvando em `/etc/letsencrypt/live/<dominio>/`.  
+  - Gera `config/cobweb.conf` a partir do template e sincroniza para `/etc/nginx/sites-available/cobweb.conf`.  
+  - Valida a configuracao com `nginx -t`.
 
 - `make run`  
-  - Revalida a configuracao (`nginx -t`) e inicia ou recarrega o servico `nginx`.  
+  - Executa `nginx -t` e inicia/recarrega o serviço `nginx`.  
   - Mostra um resumo do status (`systemctl status nginx --lines=3`).
 
 Operacoes complementares:
@@ -45,53 +46,59 @@ make restart  # executa nginx -t e systemctl restart nginx
 ```
 
 ## Ajustando rotas e upstreams
-- Todas as informacoes ficam salvas em `config/settings.json`.  
-- Para editar ou adicionar rotas, execute `make config` novamente; o script reaproveita os valores atuais como padrao.  
-- Para rotas baseadas em caminho (ex: `/admin/`), deixe o caminho terminar com `/` para evitar duplicacao de path na origem.  
-- Se nao definir um upstream para `/`, o Cobweb responde `404` na raiz.
+- As escolhas ficam salvas em `config/settings.json`.  
+- Rode `make config` novamente para alterar rotas; os valores atuais aparecem como padrao.  
+- Para rotas baseadas em caminho (`/api/`, `/grafana/`), mantenha a barra final para evitar duplicacao de path no `proxy_pass`.  
+- Se deixar o upstream de `/` vazio, o Cobweb responde `404` na raiz e atende apenas subcaminhos configurados.
 
 ## Estrutura gerada
 ```
 .
-├─ Makefile
-├─ README.md
-├─ .gitignore
-├─ scripts/
-│  ├─ install.sh    # instala dependencias
-│  ├─ config.py     # coleta dados, emite certificado e escreve o nginx.conf
-│  ├─ run.sh        # valida e inicia/recarrega o nginx
-│  ├─ stop.sh       # para o nginx
-│  └─ restart.sh    # reinicia o nginx
-├─ templates/
-│  └─ cobweb.conf.tpl  # template do servidor HTTPS
-└─ config/
-   ├─ cobweb.conf      # (gerado) configuracao ativa usada no nginx
-   └─ settings.json    # (gerado) cache das respostas do wizard
+|-- Makefile
+|-- README.md
+|-- .gitignore
+|-- scripts/
+|   |-- install.sh      # instala dependencias e acme.sh
+|   |-- config.py       # coleta dados, emite certificado e escreve o nginx.conf
+|   |-- run.sh          # valida e inicia/recarrega o nginx
+|   |-- stop.sh         # para o nginx
+|   `-- restart.sh      # reinicia o nginx
+|-- templates/
+|   `-- cobweb.conf.tpl # template do servidor HTTPS
+`-- config/
+    |-- cobweb.conf     # (gerado) configuracao ativa usada pelo nginx
+    `-- settings.json   # (gerado) cache das respostas do wizard
 ```
 
-Arquivos gerados (`config/cobweb.conf` e `config/settings.json`) estao listados no `.gitignore` para evitar expor dados sensiveis do ambiente.
+Arquivos gerados (`config/cobweb.conf` e `config/settings.json`) estao listados no `.gitignore` para evitar versionar dados especificos do ambiente.
 
-## Renovacao do certificado
-O certbot ja guarda o certificado em `/etc/letsencrypt/live/<dominio>/`. Para renovar automaticamente sem abrir a porta 80, use o mesmo desafio TLS-ALPN:
-
-```
-sudo certbot renew --preferred-challenges tls-alpn-01 --deploy-hook "systemctl reload nginx"
-```
-
-Recomenda-se criar um cron (`/etc/cron.d/cobweb-renew`) ou um timer do systemd chamando o comando acima diariamente. O certbot so tenta renovar quando o certificado estiver proximo de expirar.
+## Renovacao automatica
+- O acme.sh instala um cron job (rodando como root) que verifica certificados diariamente.  
+- Os certificados continuam sendo salvos no home do acme.sh e o script `make config` garante a instalacao em `/etc/letsencrypt/live/<dominio>/`.  
+- Para testar manualmente a renovacao/reinstalacao:
+  ```bash
+  sudo acme.sh --home /opt/acme.sh --renew -d seu.dominio --force --alpn
+  sudo acme.sh --home /opt/acme.sh --install-cert \
+    -d seu.dominio \
+    --key-file /etc/letsencrypt/live/seu.dominio/privkey.pem \
+    --fullchain-file /etc/letsencrypt/live/seu.dominio/fullchain.pem \
+    --reloadcmd "systemctl reload nginx"
+  ```
+  (o `--force` deve ser usado com moderacao para nao extrapolar limites da Let's Encrypt).
 
 ## Verificando conectividade
 Depois do `make run`, valide:
-- `sudo nginx -t` deve seguir retornando `syntax is ok`.
+- `sudo nginx -t` continua retornando `syntax is ok`.
 - `sudo systemctl status nginx` exibe o servico como `active (running)`.
-- `curl -I https://seu.dominio` deve responder com `200/302/404` conforme o upstream esperado (o handshake TLS prova que o certificado foi aplicado).
+- `curl -I https://seu.dominio` confirma o handshake TLS e a resposta esperada do upstream.
 
 ## Problemas comuns
-- **Certbot falha afirmando que a porta 443 esta em uso:** certifique-se de que `make stop` foi executado (ou que nenhum outro processo usa a porta).  
-- **Dominio nao resolve:** confirme o registro DNS antes de emitir o certificado.  
-- **Novas rotas nao entram em vigor:** rode `make config` e depois `make run` para reaplicar a configuracao.
+- **acme.sh reclama da porta 443 em uso:** certifique-se de que `make stop` foi executado ou que nenhum outro processo usa a porta antes da emissao.  
+- **Dominio nao resolve para o IP correto:** ajuste o DNS antes de tentar emitir o certificado.  
+- **Rotas nao aplicam:** rode `make config` novamente (para regenerar o arquivo) e depois `make run`.  
+- **Permissao negada ao gravar em `/etc/letsencrypt`:** garanta que os comandos sejam executados por um usuario com sudo (o script pede sudo automaticamente quando necessario).
 
 ## Proximos passos sugeridos
-- Automatizar a renovacao com cron/timer.  
-- Adicionar novas politicas de seguranca ao template (`rate-limit`, `deny`, etc.) conforme seu caso de uso.  
-- Versionar um arquivo `config/settings.example.json` se quiser compartilhar configuracoes padrao sem dados reais.
+- Customizar o template `templates/cobweb.conf.tpl` com headers adicionais, limitacoes de taxa, rate limiting etc.  
+- Adicionar monitoramento (ex: checar `/healthz`).  
+- Manter um documento com as rotas/upstreams provisionados para facilitar auditoria ou reproducao em outro ambiente.

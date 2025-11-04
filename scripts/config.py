@@ -16,6 +16,11 @@ LOCAL_NGINX_CONF = CONFIG_DIR / "cobweb.conf"
 TEMPLATE_PATH = PROJECT_ROOT / "templates" / "cobweb.conf.tpl"
 REMOTE_NGINX_AVAILABLE = Path("/etc/nginx/sites-available/cobweb.conf")
 REMOTE_NGINX_ENABLED = Path("/etc/nginx/sites-enabled/cobweb.conf")
+ACME_HOME = Path("/opt/acme.sh")
+ACME_BIN_CANDIDATES = [
+    ACME_HOME / "acme.sh",
+    Path("/usr/local/bin/acme.sh"),
+]
 
 
 def log(message: str) -> None:
@@ -32,25 +37,6 @@ def require_cmd(cmd: str) -> None:
     if shutil.which(cmd) is None:
         log(f"Erro: comando '{cmd}' nao esta disponivel no PATH.")
         sys.exit(1)
-
-
-def find_certbot() -> str:
-    snap_path = Path("/snap/bin/certbot")
-    candidates: List[str] = []
-    if snap_path.exists():
-        candidates.append(str(snap_path))
-
-    which_path = shutil.which("certbot")
-    if which_path:
-        candidates.append(which_path)
-
-    if not candidates:
-        log("Erro: certbot nao encontrado. Execute 'make install' antes de continuar.")
-        sys.exit(1)
-
-    selected = candidates[0]
-    log(f"Usando certbot em {selected}")
-    return selected
 
 
 def detect_sudo() -> Optional[str]:
@@ -141,52 +127,141 @@ def prompt_routes(existing: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return routes
 
 
-def ensure_certificate(domain: str, email: str, sudo: Optional[str], certbot_bin: str) -> None:
-    cert_path = Path(f"/etc/letsencrypt/live/{domain}/fullchain.pem")
-    if cert_path.exists():
-        log(f"Certificado Let's Encrypt encontrado em {cert_path}. Pulando emissao.")
+def find_acme() -> str:
+    for candidate in ACME_BIN_CANDIDATES:
+        if candidate.exists():
+            log(f"Usando acme.sh em {candidate}")
+            return str(candidate)
+
+    which_path = shutil.which("acme.sh")
+    if which_path:
+        log(f"Usando acme.sh em {which_path}")
+        return which_path
+
+    log("Erro: acme.sh nao encontrado. Execute 'make install' antes de continuar.")
+    sys.exit(1)
+
+
+def ensure_acme_account(acme_bin: str, email: str, sudo: Optional[str]) -> None:
+    env = os.environ.copy()
+    env.setdefault("ACME_HOME", str(ACME_HOME))
+
+    register_cmd = build_cmd(
+        sudo,
+        acme_bin,
+        "--home",
+        str(ACME_HOME),
+        "--server",
+        "letsencrypt",
+        "--register-account",
+        "-m",
+        email,
+    )
+
+    result = subprocess.run(register_cmd, capture_output=True, text=True, env=env)
+    if result.returncode == 0:
+        log("Conta ACME registrada/confirmada com sucesso.")
         return
 
-    log("Nenhum certificado encontrado. Iniciando emissao via desafio TLS-ALPN-01...")
+    combined = (result.stdout + result.stderr).lower()
+    if "already registered" in combined:
+        log("Conta ACME ja registrada. Atualizando dados...")
+        update_cmd = build_cmd(
+            sudo,
+            acme_bin,
+            "--home",
+            str(ACME_HOME),
+            "--server",
+            "letsencrypt",
+            "--update-account",
+            "-m",
+            email,
+        )
+        update = subprocess.run(update_cmd, capture_output=True, text=True, env=env)
+        if update.returncode == 0:
+            log("Conta ACME atualizada.")
+            return
+        sys.stdout.write(update.stdout)
+        sys.stderr.write(update.stderr)
+        log("Falha ao atualizar conta ACME.")
+        sys.exit(update.returncode)
+
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    log("Falha ao registrar conta ACME.")
+    sys.exit(result.returncode)
+
+
+def ensure_certificate(domain: str, email: str, sudo: Optional[str], acme_bin: str) -> None:
+    cert_dir = Path(f"/etc/letsencrypt/live/{domain}")
+    key_path = cert_dir / "privkey.pem"
+    fullchain_path = cert_dir / "fullchain.pem"
+
+    env = os.environ.copy()
+    env.setdefault("ACME_HOME", str(ACME_HOME))
+
+    run_cmd(sudo, "mkdir", "-p", str(cert_dir))
+
+    ensure_acme_account(acme_bin, email, sudo)
+
+    if key_path.exists() and fullchain_path.exists():
+        log(f"Certificado existente detectado em {cert_dir}. Reinstalando via acme.sh --install-cert.")
+        install_cmd = build_cmd(
+            sudo,
+            acme_bin,
+            "--home",
+            str(ACME_HOME),
+            "--server",
+            "letsencrypt",
+            "--install-cert",
+            "-d",
+            domain,
+            "--key-file",
+            str(key_path),
+            "--fullchain-file",
+            str(fullchain_path),
+            "--reloadcmd",
+            "systemctl reload nginx",
+        )
+        install = subprocess.run(install_cmd, capture_output=True, text=True, env=env)
+        if install.returncode == 0:
+            log("Certificado reinstalado com sucesso.")
+            return
+        sys.stdout.write(install.stdout)
+        sys.stderr.write(install.stderr)
+        log("Falha ao reinstalar certificado com acme.sh.")
+        sys.exit(install.returncode)
+
+    log("Nenhum certificado encontrado. Emitindo via acme.sh com desafio ALPN na porta 443...")
     run_cmd(sudo, "systemctl", "stop", "nginx", check=False)
 
-    args_base = [
-        certbot_bin,
-        "certonly",
-        "--standalone",
+    issue_cmd = build_cmd(
+        sudo,
+        acme_bin,
+        "--home",
+        str(ACME_HOME),
+        "--server",
+        "letsencrypt",
+        "--issue",
+        "--alpn",
         "-d",
         domain,
-        "--agree-tos",
-        "--email",
-        email,
-        "--non-interactive",
-        "--keep-until-expiring",
-    ]
+        "--key-file",
+        str(key_path),
+        "--fullchain-file",
+        str(fullchain_path),
+        "--reloadcmd",
+        "systemctl reload nginx",
+    )
 
-    attempts = [
-        ("tls-alpn-01", ["--preferred-challenges", "tls-alpn-01"]),
-        ("tls-alpn", ["--preferred-challenges", "tls-alpn"]),
-    ]
-
-    last_rc = 1
-    for label, extra in attempts:
-        cmd = build_cmd(sudo, *(args_base + extra))
-        log(f"Executando certbot com desafio '{label}'...")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        last_rc = result.returncode
-        if result.returncode == 0:
-            log("Certificado emitido com sucesso.")
-            return
-
+    result = subprocess.run(issue_cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
-        if "Unrecognized challenges" not in result.stderr:
-            break
+        log("Falha ao emitir certificado com acme.sh.")
+        sys.exit(result.returncode)
 
-        log(f"Certbot nao reconheceu o desafio '{label}'. Tentando alternativa...")
-
-    log("Falha ao emitir o certificado. Verifique logs do certbot e garanta que a porta 443 esteja livre.")
-    sys.exit(last_rc or 1)
+    log("Certificado emitido com sucesso via acme.sh.")
 
 
 def render_routes(routes: List[Dict[str, Any]]) -> str:
@@ -292,7 +367,7 @@ def save_settings(settings: Dict[str, Any]) -> None:
 def main() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     ensure_template_exists()
-    certbot_bin = find_certbot()
+    acme_bin = find_acme()
     sudo = detect_sudo()
 
     existing = load_existing()
@@ -301,7 +376,7 @@ def main() -> None:
 
     routes = prompt_routes(existing.get("routes", []))
 
-    ensure_certificate(domain, email, sudo, certbot_bin)
+    ensure_certificate(domain, email, sudo, acme_bin)
 
     ssl_cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
     ssl_cert_key = f"/etc/letsencrypt/live/{domain}/privkey.pem"

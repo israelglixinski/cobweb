@@ -28,32 +28,13 @@ log "Atualizando indices do apt..."
 ${SUDO} apt-get update
 
 log "Instalando dependencias essenciais..."
-${SUDO} apt-get install "${APT_OPTS[@]}" nginx
+${SUDO} apt-get install "${APT_OPTS[@]}" nginx curl socat
 
+# Remover installacoes anteriores de certbot para evitar conflitos conceituais
 if ${SUDO} dpkg -l | awk '{print $2}' | grep -q "^certbot$"; then
-  log "Removendo pacote certbot do apt para evitar conflito..."
+  log "Removendo pacote certbot do apt (usaremos acme.sh)..."
   ${SUDO} apt-get remove "${APT_OPTS[@]}" certbot
   ${SUDO} apt-get autoremove "${APT_OPTS[@]}" || true
-fi
-
-if ! command -v snap >/dev/null 2>&1; then
-  log "Instalando snapd (necessario para o certbot moderno)..."
-  ${SUDO} apt-get install "${APT_OPTS[@]}" snapd
-  ${SUDO} systemctl enable --now snapd.socket >/dev/null
-fi
-
-log "Instalando/atualizando certbot via snap (suporte TLS-ALPN)..."
-${SUDO} snap install core >/dev/null
-${SUDO} snap refresh core >/dev/null
-if ! ${SUDO} snap list | awk '{print $1}' | grep -q "^certbot$"; then
-  ${SUDO} snap install --classic certbot >/dev/null
-else
-  ${SUDO} snap refresh certbot >/dev/null
-fi
-
-if [[ ! -L /usr/bin/certbot || "$(readlink -f /usr/bin/certbot)" != "/snap/bin/certbot" ]]; then
-  log "Criando link simbolico para usar o certbot do snap..."
-  ${SUDO} ln -sf /snap/bin/certbot /usr/bin/certbot
 fi
 
 log "Garantindo estrutura de diretorios do projeto..."
@@ -72,5 +53,26 @@ ${SUDO} systemctl enable nginx >/dev/null
 
 log "Garantindo que o Nginx esteja parado (a configuracao sera aplicada futuramente)..."
 ${SUDO} systemctl stop nginx >/dev/null 2>&1 || true
+
+ACME_HOME="/opt/acme.sh"
+ACME_BIN="${ACME_HOME}/acme.sh"
+if [[ ! -d "${ACME_HOME}" ]]; then
+  log "Instalando acme.sh (cliente ACME com suporte a TLS-ALPN)..."
+  require_cmd curl
+  TMP_INSTALL_SCRIPT="$(mktemp)"
+  curl -fsSL https://get.acme.sh -o "${TMP_INSTALL_SCRIPT}"
+  ${SUDO} sh "${TMP_INSTALL_SCRIPT}" --install --home "${ACME_HOME}" >/dev/null
+  rm -f "${TMP_INSTALL_SCRIPT}"
+else
+  log "Atualizando acme.sh..."
+  ${SUDO} "${ACME_BIN}" --upgrade >/dev/null
+fi
+
+${SUDO} chmod +x "${ACME_BIN}"
+
+if [[ ! -L /usr/local/bin/acme.sh || "$(readlink -f /usr/local/bin/acme.sh 2>/dev/null)" != "${ACME_BIN}" ]]; then
+  log "Criando link simbolico /usr/local/bin/acme.sh..."
+  ${SUDO} ln -sf "${ACME_BIN}" /usr/local/bin/acme.sh
+fi
 
 log "Dependencias instaladas com sucesso."
